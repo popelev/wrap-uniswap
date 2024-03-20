@@ -5,7 +5,7 @@ pragma solidity ^0.8.13;
 // TODO ERC20 ??
 
 contract MyWrappedUniswap {
-    using SafeERC20 for IERC20;
+    //TODO using SafeERC20 for IERC20;
     
     address public constant UNISWAP_V2_ROUTER = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
 
