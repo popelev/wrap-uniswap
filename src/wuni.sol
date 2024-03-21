@@ -15,7 +15,7 @@ contract MyWrappedUniswap is ReentrancyGuard {
     uint24 public constant UNISWAP_V3_FIX_FEE = 3000;
     address constant WETH9 = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
-    mapping(address => mapping(address => uint256)) public balance; // balance[user][asset]
+    mapping(address => mapping(address => uint256)) public _balance; // _balance[user][asset]
 
     /// @notice Deposit token or ETH to contract
     /// @param tokenIn Address of token
@@ -32,14 +32,14 @@ contract MyWrappedUniswap is ReentrancyGuard {
         uint256 delta = balanceAfter - balanceBefore;
         require(amountIn >= delta, "Wrong deposited token amount");
 
-        balance[msg.sender][tokenIn] += delta;
+        _balance[msg.sender][tokenIn] += delta;
     }
 
     /// @notice Withdraw token from contract
     /// @param tokenOut Address of token
     /// @param amountOut Amount of token
     function withdraw(address tokenOut, uint256 amountOut) external nonReentrant {
-        balance[msg.sender][tokenOut] -= amountOut;
+        _balance[msg.sender][tokenOut] -= amountOut;
 
         uint256 balanceBefore = IERC20(tokenOut).balanceOf(address(this));
         IERC20(tokenOut).safeTransfer(msg.sender, amountOut);
@@ -59,7 +59,7 @@ contract MyWrappedUniswap is ReentrancyGuard {
         address tokenOut,
         uint256 amountIn
     ) external nonReentrant returns (uint256 amountOut) {
-        balance[msg.sender][tokenIn] -= amountIn;
+        _balance[msg.sender][tokenIn] -= amountIn;
 
         IERC20(tokenIn).safeIncreaseAllowance(UNISWAP_V2_ROUTER, amountIn);
 
@@ -79,7 +79,7 @@ contract MyWrappedUniswap is ReentrancyGuard {
         // amounts[0] = tokenIn amount, amounts[1] = tokenOut amount
         amountOut = amounts[1];
 
-        balance[msg.sender][tokenOut] += amountOut;
+        _balance[msg.sender][tokenOut] += amountOut;
     }
 
     /// @notice Swap token via Uniswap v3 with default pool fee
@@ -107,7 +107,7 @@ contract MyWrappedUniswap is ReentrancyGuard {
         uint256 amountIn,
         uint24 poolFee
     ) public nonReentrant returns (uint256 amountOut) {
-        balance[msg.sender][tokenIn] -= amountIn;
+        _balance[msg.sender][tokenIn] -= amountIn;
 
         IERC20(tokenIn).safeIncreaseAllowance(UNISWAP_V3_ROUTER, amountIn);
 
@@ -123,14 +123,23 @@ contract MyWrappedUniswap is ReentrancyGuard {
 
         amountOut = IUniswapV3Router(UNISWAP_V3_ROUTER).exactInput(params);
 
-        balance[msg.sender][tokenOut] += amountOut;
+        _balance[msg.sender][tokenOut] += amountOut;
     }
 
     /// @notice Wrap ETH as WETH9
     function depositWETH() internal {
         uint256 amount = msg.value;
         IWETH(WETH9).deposit{value: amount}();
-        balance[msg.sender][WETH9] += amount;
+        _balance[msg.sender][WETH9] += amount;
+    }
+
+    /// @notice Get token balance
+    /// @param user User address
+    /// @param token Token address
+    /// @return amount Amount of tokens
+
+    function getBalance(address user, address token) external view returns (uint256 amount) {
+        amount = _balance[user][token];
     }
 
     receive() external payable {
