@@ -1,75 +1,78 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.23;
 
-// TODO reentrncy guard
-// TODO ERC20 ??
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-contract MyWrappedUniswap {
-    //TODO using SafeERC20 for IERC20;
-    
+/// @title Contract for swap tokens via Uniswap v2 and Uniswap v3 in Ethereum Mainnet
+/// @author Fedor Popelev
+contract MyWrappedUniswap is ReentrancyGuard {
+    using SafeERC20 for IERC20;
+
     address public constant UNISWAP_V2_ROUTER = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
-
     address public constant UNISWAP_V3_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
-   
     uint24 public constant UNISWAP_V3_FIX_FEE = 3000;
+    address constant WETH9 = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 
-    mapping (address => mapping (address => uint256)) public balance;  // balance[user][asset]
+    mapping(address => mapping(address => uint256)) public balance; // balance[user][asset]
 
-    function deposit(
-        address tokenIn, 
-        uint256 amountIn) external {
+    /// @notice Deposit token or ETH to contract
+    /// @param tokenIn Address of token
+    /// @param amountIn Amount of token
+    function deposit(address tokenIn, uint256 amountIn) external payable nonReentrant {
+        if (msg.value > 0) {
+            depositWETH();
+        }
 
         uint256 balanceBefore = IERC20(tokenIn).balanceOf(address(this));
-        bool success = IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn);
-        // TODO require
-
+        IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
         uint256 balanceAfter = IERC20(tokenIn).balanceOf(address(this));
 
         uint256 delta = balanceAfter - balanceBefore;
-        
-        // TODO require amountIn == delta
+        require(amountIn >= delta, "Wrong deposited token amount");
 
         balance[msg.sender][tokenIn] += delta;
     }
 
-    function withdraw(
-        address tokenOut, 
-        uint256 amountOut) external {
-        
+    /// @notice Withdraw token from contract
+    /// @param tokenOut Address of token
+    /// @param amountOut Amount of token
+    function withdraw(address tokenOut, uint256 amountOut) external nonReentrant {
         balance[msg.sender][tokenOut] -= amountOut;
 
         uint256 balanceBefore = IERC20(tokenOut).balanceOf(address(this));
-        bool success = IERC20(tokenOut).transfer(msg.sender, amountOut);
-        // TODO require
-
+        IERC20(tokenOut).safeTransfer(msg.sender, amountOut);
         uint256 balanceAfter = IERC20(tokenOut).balanceOf(address(this));
 
-        uint256 delta = balanceAfter - balanceBefore;
-        
-        // TODO require amountOut >= delta
+        uint256 delta = balanceBefore - balanceAfter;
+        require(amountOut >= delta, "Wrong withdrawed token amount");
     }
 
-    // swapSingleHopExactAmountIn
+    /// @notice Swap token via Uniswap v2
+    /// @param tokenIn Address of send token
+    /// @param tokenOut Address of recieve token
+    /// @param amountIn Amount of send token
+    /// @return amountOut Amount of recieved token
     function swapUniV2(
-        address tokenIn, 
+        address tokenIn,
         address tokenOut,
         uint256 amountIn
-    ) external returns (uint256 amountOut)
-    {
+    ) external nonReentrant returns (uint256 amountOut) {
         balance[msg.sender][tokenIn] -= amountIn;
 
-        IERC20(tokenIn).approve(UNISWAP_V2_ROUTER, amountIn);
+        IERC20(tokenIn).safeIncreaseAllowance(UNISWAP_V2_ROUTER, amountIn);
 
         address[] memory path;
         path = new address[](2);
         path[0] = tokenIn;
         path[1] = tokenOut;
-        
+
         uint256[] memory amounts = IUniswapV2Router(UNISWAP_V2_ROUTER).swapExactTokensForTokens(
             amountIn,
-            0, 
-            path, 
-            address(this), 
+            0,
+            path,
+            address(this),
             block.timestamp
         );
 
@@ -77,35 +80,40 @@ contract MyWrappedUniswap {
         amountOut = amounts[1];
 
         balance[msg.sender][tokenOut] += amountOut;
-
     }
 
+    /// @notice Swap token via Uniswap v3 with default pool fee
+    /// @param tokenIn Address of send token
+    /// @param tokenOut Address of recieve token
+    /// @param amountIn Amount of send token
+    /// @return amountOut Amount of recieved token
     function swapUniV3(
         address tokenIn,
         address tokenOut,
         uint256 amountIn
     ) external returns (uint256 amountOut) {
-        swapUniV3(tokenIn, tokenOut , amountIn, UNISWAP_V3_FIX_FEE);
+        swapUniV3(tokenIn, tokenOut, amountIn, UNISWAP_V3_FIX_FEE);
     }
 
+    /// @notice Swap token via Uniswap v3 with default pool fee
+    /// @param tokenIn Address of send token
+    /// @param tokenOut Address of recieve token
+    /// @param amountIn Amount of send token
+    /// @param poolFee Custom pool fee
+    /// @return amountOut Amount of recieved token
     function swapUniV3(
         address tokenIn,
         address tokenOut,
         uint256 amountIn,
         uint24 poolFee
-    ) public returns (uint256 amountOut) {
+    ) public nonReentrant returns (uint256 amountOut) {
         balance[msg.sender][tokenIn] -= amountIn;
 
-        IERC20(tokenIn).approve(UNISWAP_V3_ROUTER, amountIn);
-        
-        bytes memory path = abi.encodePacked(
-            tokenIn,
-            poolFee,
-            tokenOut
-        );
+        IERC20(tokenIn).safeIncreaseAllowance(UNISWAP_V3_ROUTER, amountIn);
 
-        IUniswapV3Router.ExactInputParams memory params = IUniswapV3Router
-            .ExactInputParams({
+        bytes memory path = abi.encodePacked(tokenIn, poolFee, tokenOut);
+
+        IUniswapV3Router.ExactInputParams memory params = IUniswapV3Router.ExactInputParams({
             path: path,
             recipient: address(this),
             deadline: block.timestamp,
@@ -117,6 +125,22 @@ contract MyWrappedUniswap {
 
         balance[msg.sender][tokenOut] += amountOut;
     }
+
+    /// @notice Wrap ETH as WETH9
+    function depositWETH() internal {
+        uint256 amount = msg.value;
+        IWETH(WETH9).deposit{value: amount}();
+        balance[msg.sender][WETH9] += amount;
+    }
+
+    receive() external payable {
+        depositWETH();
+    }
+}
+
+interface IWETH is IERC20 {
+    function deposit() external payable;
+    function withdraw(uint256 amount) external;
 }
 
 interface IUniswapV2Router {
@@ -149,14 +173,6 @@ interface IUniswapV3Router {
         uint160 sqrtPriceLimitX96;
     }
 
-    /// @notice Swaps amountIn of one token for as much as possible of another token
-    /// @param params The parameters necessary for the swap, encoded as ExactInputSingleParams in calldata
-    /// @return amountOut The amount of the received token
-    function exactInputSingle(ExactInputSingleParams calldata params)
-        external
-        payable
-        returns (uint256 amountOut);
-
     struct ExactInputParams {
         bytes path;
         address recipient;
@@ -165,27 +181,11 @@ interface IUniswapV3Router {
         uint256 amountOutMinimum;
     }
 
-    /// @notice Swaps amountIn of one token for as much as possible of another along the specified path
-    /// @param params The parameters necessary for the multi-hop swap, encoded as ExactInputParams in calldata
-    /// @return amountOut The amount of the received token
-    function exactInput(ExactInputParams calldata params)
-        external
-        payable
-        returns (uint256 amountOut);
-}
+    function exactInputSingle(
+        ExactInputSingleParams calldata params
+    ) external payable returns (uint256 amountOut);
 
-interface IERC20 {
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(address recipient, uint256 amount)
-        external
-        returns (bool);
-    function allowance(address owner, address spender)
-        external
-        view
-        returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function transferFrom(address sender, address recipient, uint256 amount)
-        external
-        returns (bool);
+    function exactInput(
+        ExactInputParams calldata params
+    ) external payable returns (uint256 amountOut);
 }

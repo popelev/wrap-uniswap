@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.13;
+pragma solidity ^0.8.23;
 
 import {Test, console2} from "forge-std/Test.sol";
-import {MyWrappedUniswap} from "src/wuni.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {MyWrappedUniswap, IWETH} from "src/wuni.sol";
 
 address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
 address constant DAI = 0x6B175474E89094C44Da98b954EedeAC495271d0F;
@@ -17,7 +18,15 @@ contract MyUniswapTest is Test {
 
     function setUp() public {}
 
-    function testUniV2() public {
+    function test_deposit_RevertedWithoutApprove() public {
+        weth.deposit{value: 1e18}();
+        // weth.approve(address(wuni), 1e18);
+
+        vm.expectRevert();
+        wuni.deposit(WETH, 1e18);
+    }
+
+    function test_swapUniV2_WETH_DAI() public {
         weth.deposit{value: 1e18}();
         weth.approve(address(wuni), 1e18);
         wuni.deposit(WETH, 1e18);
@@ -27,7 +36,7 @@ contract MyUniswapTest is Test {
         console2.log("DAI", amountOut);
     }
 
-    function testUniV3() public {
+    function test_swapUniV3_WETH_DAI() public {
         weth.deposit{value: 1e18}();
         weth.approve(address(wuni), 1e18);
         wuni.deposit(WETH, 1e18);
@@ -36,25 +45,4 @@ contract MyUniswapTest is Test {
 
         console2.log("DAI", amountOut);
     }
-}
-
-interface IERC20 {
-    function totalSupply() external view returns (uint256);
-    function balanceOf(address account) external view returns (uint256);
-    function transfer(address recipient, uint256 amount)
-        external
-        returns (bool);
-    function allowance(address owner, address spender)
-        external
-        view
-        returns (uint256);
-    function approve(address spender, uint256 amount) external returns (bool);
-    function transferFrom(address sender, address recipient, uint256 amount)
-        external
-        returns (bool);
-}
-
-interface IWETH is IERC20 {
-    function deposit() external payable;
-    function withdraw(uint256 amount) external;
 }
